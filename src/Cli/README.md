@@ -23,3 +23,11 @@ dotnet run --project src/Cli
 dotnet publish src/Cli -c Release -r win-x64 --self-contained true
 # або linux-x64 / osx-arm64
 ```
+## Self-contained публікація
+
+Опубліковано під двома RID (`dotnet publish -c Release -r <RID> --self-contained true`):
+
+- win-x64: 76,84 MB
+- linux-x64: 78,80 MB
+
+Розміри порівнянні, бо в обох випадках разом з застосунком пакується весь .NET runtime.

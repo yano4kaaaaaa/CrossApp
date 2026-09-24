@@ -1,0 +1,5 @@
+[
+  { "Id": "B-201", "Isbn": "978-966-03-9999-1", "Title": "Тигролови", "Year": 1944, "Author": "Іван Багряний" },
+  { "Id": "B-202", "Isbn": "978-966-03-8888-2", "Title": "Кайдашева сім'я", "Year": 1879, "Author": "Іван Нечуй-Левицький" },
+  { "Id": "B-203", "Isbn": "978-0-13-110362-7", "Title": "The C Programming Language", "Year": 1978, "Author": "Brian Kernighan" }
+]

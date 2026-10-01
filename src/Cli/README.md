@@ -66,3 +66,53 @@ dotnet publish src/Cli -c Release -r win-x64 --self-contained false
 - `Core/Dto/` — record-типи формату даних (тиждень 3)
 - `Core/Domain/` — сутності з поведінкою (тиждень 4)
 - `Core/Storage/` — реалізації сховищ (тиждень 5)
+## Лабораторна 4: доменна модель (BookCopy + Loan)
+
+### Сутності
+
+- `src/Core/Domain/BookCopy.cs` — примірник книги: ISBN, стан видачі (`IsIssued`).
+- `src/Core/Domain/Loan.cs` — видача: зв'язує примірник і читача, дати видачі/повернення, явний стан `LoanStatus`.
+
+DTO тижня 3 (`BookDto`, `ReaderDto`) лишаються форматом даних для імпорту; нові DTO
+(`BookCopyDto`, `LoanDto`) — формат зберігання стану сутностей (`ToDto`/`FromDto`).
+
+### Інваріанти
+
+| Правило | Тип винятку | Де перевіряється |
+|---|---|---|
+| ISBN примірника не порожній | `ArgumentException` | `BookCopy.Create` |
+| Ідентифікатор примірника не порожній | `ArgumentException` | `BookCopy.Create` |
+| Не можна видати вже виданий примірник | `InvalidOperationException` | `BookCopy.Issue` |
+| Не можна повернути не виданий примірник | `InvalidOperationException` | `BookCopy.Return` |
+| Ідентифікатор читача не порожній | `ArgumentException` | `Loan.Open` |
+| Дата повернення не раніше дати видачі | `ArgumentOutOfRangeException` | `Loan.Close` / `Loan.FromDto` |
+| Перехід стану Closed → Closed заборонений | `InvalidOperationException` | `Loan.Close` (через `EnsureTransition`) |
+
+### Інкапсуляція
+
+- Конструктори `BookCopy` і `Loan` — приватні; єдиний спосіб створення — фабричні методи
+  `Create` / `Open` / `FromDto`, які перевіряють усі інваріанти ДО створення об'єкта.
+- `IsIssued`, `ReturnedOn` — властивості з `private set`: читаються звідусіль, змінюються лише
+  методами класу (`Issue`, `Return`, `Close`).
+- `Core/Domain` не залежить від `Console` чи `File` — лише бізнес-правила.
+
+### Запуск
+
+```bash
+dotnet run --project src/Cli
+```
+
+Виводить: успішний сценарій, п'ять порушень інваріантів, і три блоки додаткових завдань.
+
+### Додаткові завдання
+
+1. **Зв'язок із тижнем 3** (`BookCopyCsvImporter` + `BookCopyImportAdapter`): `data/copies.csv`
+   імпортується у `BookCopyDto`, потім перетворюється на сутності `BookCopy`. Помилки
+   збираються на ДВОХ рівнях: структурні (неправильний формат `bool`) — ще на етапі CSV,
+   і доменні (порожній ISBN) — уже при спробі створити сутність через `FromDto`.
+2. **Інваріант на дві сутності** (`LoanPolicy.EnsureReaderCanBorrow`): читач не може мати
+   більше 5 відкритих видач одночасно. Правило не можна реалізувати всередині `Loan` чи
+   `BookCopy` окремо — жодна сутність не має доступу до повного списку видач читача;
+   таке місце — сервіс (тиждень 5), тут представлено статичним класом-політикою.
+3. **Явний стан `LoanStatus`** (`enum { Open, Closed }`): замість обчислюваного `bool IsClosed`
+   додано явний стан і перевірка допустимих переходів через `switch` у `EnsureTransition`.

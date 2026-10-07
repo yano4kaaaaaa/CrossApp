@@ -116,3 +116,67 @@ dotnet run --project src/Cli
    таке місце — сервіс (тиждень 5), тут представлено статичним класом-політикою.
 3. **Явний стан `LoanStatus`** (`enum { Open, Closed }`): замість обчислюваного `bool IsClosed`
    додано явний стан і перевірка допустимих переходів через `switch` у `EnsureTransition`.
+   ## Лабораторна 5: сервісний шар (IBookStore + LendingService)
+
+### Інтерфейс
+
+`src/Core/Abstractions/IBookStore.cs` — контракт сховища, 5 методів:
+
+```csharp
+public interface IBookStore
+{
+    IReadOnlyList<BookCopy> List();
+    BookCopy? GetById(string id);
+    void Add(BookCopy item);
+    void Update(BookCopy item);
+    bool Remove(string id);
+}
+```
+
+### Реалізації
+
+- **`InMemoryBookStore`** (`Core/Storage`) — зберігає записи у `Dictionary<string, BookCopy>`
+  у пам'яті; дані зникають після завершення програми. Наповнюється через `SampleData`
+  (18 примірників).
+- **`FileBookStore`** (`Core/Storage`) — кеш у пам'яті + синхронізація з
+  `data/library.json` у форматі `BookCopyDto` (System.Text.Json). Читає файл один раз
+  при першому зверненні (`EnsureLoaded`), записує після кожної зміни (`Flush`).
+- **`CachingBookStore`** (додаткове завдання 1) — декоратор: приймає будь-який інший
+  `IBookStore` у конструкторі, кешує результат `List()`, скидає кеш після `Add`/`Update`/`Remove`.
+
+### Сервіс
+
+`src/Core/Services/LendingService.cs` залежить лише від `IBookStore` (інтерфейсу, не класу),
+отримує його через конструктор (ручний DI). Операції: `AddBook`, `IssueCopy`, `ReturnCopy`,
+`All`, `Find(id)`, і `Find(predicate)` (додаткове завдання 2).
+
+### Composition root
+
+`src/Cli/Program.cs` — єдине місце, де створюються конкретні класи сховищ (через
+`StoreFactory`, додаткове завдання 3). Ніде більше в `Core` немає `new FileBookStore(...)`
+чи подібного.
+
+```csharp
+string dataPath = Path.Combine(AppContext.BaseDirectory, "data", "library.json");
+IBookStore store = StoreFactory.Create(args, dataPath);
+var service = new LendingService(store);
+```
+
+### Режими запуску
+
+```bash
+dotnet run --project src/Cli            # InMemoryBookStore, 18 прикладів із SampleData
+dotnet run --project src/Cli -- --file  # FileBookStore, дані зберігаються в data/library.json
+dotnet run --project src/Cli -- --cache # CachingBookStore поверх InMemoryBookStore
+```
+
+Два запуски з `--file` накопичують дані (не обнуляють файл).
+
+### Додаткові завдання
+
+1. **`CachingBookStore`** — декоратор над `IBookStore`, той самий контракт, нова поведінка
+   (кешування `List()`).
+2. **`LendingService.Find(Func<BookCopy, bool> predicate)`** — пошук за довільною умовою,
+   наприклад `service.Find(c => c.IsIssued)`.
+3. **`StoreFactory.Create(args, dataPath)`** — вибір реалізації винесено з `Program.cs`
+   в окремий метод; `Program.cs` більше не знає деталей побудови сховища.

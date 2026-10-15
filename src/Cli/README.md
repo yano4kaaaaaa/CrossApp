@@ -180,3 +180,61 @@ dotnet run --project src/Cli -- --cache # CachingBookStore поверх InMemory
    наприклад `service.Find(c => c.IsIssued)`.
 3. **`StoreFactory.Create(args, dataPath)`** — вибір реалізації винесено з `Program.cs`
    в окремий метод; `Program.cs` більше не знає деталей побудови сховища.
+   ## Лабораторна 6: доменні події, делегати, лямбди
+
+### Які зміни вважаються подіями
+
+| Подія | Коли виникає | Дані (`LendingChangedEventArgs`) |
+|---|---|---|
+| `BookAdded` | після успішного `AddBook` | `CopyId` |
+| `CopyIssued` | після успішного `IssueCopy` | `CopyId`, `ReaderId`, `DueDate` |
+| `CopyReturned` | після успішного `ReturnCopy` | `CopyId` |
+
+Подія піднімається ЛИШЕ після успішної зміни стану. Якщо інваріант кинув виняток
+(повторна видача, порожній читач, неіснуючий id) — повідомлення немає.
+
+### Код
+
+- `src/Core/Events/LendingChangeKind.cs` — enum типу події.
+- `src/Core/Events/LendingChangedEventArgs.cs` — дані події (успадковує `EventArgs`).
+- `src/Core/Services/LendingService.cs` — `event EventHandler<LendingChangedEventArgs>? Changed`,
+  приватний `OnChanged` з `Changed?.Invoke(this, args)`, метод `FindAll(Func<BookCopy,bool>)`.
+- `Core` не містить `Console` і не пише в лог-файл.
+
+### Підписники в Cli
+
+1. **Локальний метод** `OnLendingChanged` — друкує рядок у консоль і дописує в `logs/app.log`
+   (шлях будується через `Path.Combine`, каталог створюється кодом).
+2. **Лямбда-лічильник** `(_, _) => changes++` — замикання над локальною змінною `changes`.
+
+Після `service.Changed -= OnLendingChanged` обробник мовчить (у логу немає рядка), а лічильник
+і далі спрацьовує.
+
+### Запуск
+
+```bash
+dotnet run --project src/Cli
+```
+
+Лог: `src/Cli/bin/Debug/net10.0/logs/app.log`.
+
+### Подія чи Func
+
+- **Подія** — «щось сталося», відповіді не чекаємо (`Changed`).
+- **Func** — потрібне значення у відповідь: `service.FindAll(c => !c.IsIssued)`.
+
+### Додаткові завдання
+
+1. **`INotificationSink`** (`ConsoleSink`, `FileSink` у Cli) передаються сервісу через конструктор.
+   Порівняння з подією:
+   - подія: сервіс не знає підписників, їх може бути 0..N, підписка/відписка під час роботи;
+   - sink: список одержувачів фіксований при створенні сервісу, зате залежність явна в
+     конструкторі й видна в сигнатурі; відписки немає.
+2. **`Action<string>`** — `BookCsvImporter.Load(path, onSkipped)` викликає callback для кожного
+   пропущеного рядка (результат `ImportResult` лишається без змін).
+3. **Чому async-обробник події — це `async void`.** Тип `EventHandler` повертає `void`, тому
+   обробник з `async` теж має бути `async void`. Така функція не повертає `Task`, і викликач не може
+   дочекатися її завершення (`await`) та перехопити виняток: виняток із `async void` не потрапляє в
+   `try/catch` навколо `Changed?.Invoke(...)`, а піднімається в контексті синхронізації й може
+   завершити весь процес. Тому ризиковану роботу всередині такого обробника обгортають у власний
+   `try/catch` (детально — тиждень 8).

@@ -1,99 +1,200 @@
-﻿using Cli.Notifications;
+﻿using System.Diagnostics;
 using Core;
 using Core.Abstractions;
 using Core.Domain;
-using Core.Events;
-using Core.Import;
+using Core.Dto;
+using Core.Reports;
 using Core.Services;
-using Core.Storage;
 
 // --- Composition root ---
 string dataPath = Path.Combine(AppContext.BaseDirectory, "data", "library.json");
-string logPath = Path.Combine(AppContext.BaseDirectory, "logs", "app.log");
-Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-
 IBookStore store = StoreFactory.Create(args, dataPath);
 var service = new LendingService(store);
 
-Console.WriteLine($"Сховище: {store.GetType().Name}");
-Console.WriteLine($"Лог: {logPath}");
-Console.WriteLine();
+DateTime today = DateTime.Today;
+IReadOnlyList<BookCopy> copies = service.All();
+IReadOnlyList<Loan> loans = SampleData.Loans(today);
+IReadOnlyList<BookDto> books = SampleData.Books();
 
-// Підписник 1: ЛОКАЛЬНИЙ МЕТОД (щоб згодом можна було відписатися через -=).
-void OnLendingChanged(object? sender, LendingChangedEventArgs e)
+// Прапорці (--file, --cache) не вважаються назвою звіту.
+string command = args.FirstOrDefault(a => !a.StartsWith("--")) ?? "report-top";
+
+switch (command)
 {
-    string line = EventFormatter.Format(e);
-    Console.WriteLine(line);
-    File.AppendAllText(logPath, line + Environment.NewLine);
-}
-service.Changed += OnLendingChanged;
+    case "report-top":     PrintTop(loans); break;
+    case "report-overdue": PrintOverdue(loans, today); break;
+    case "report-books":   PrintBooks(books); break;
+    case "report-stats":   PrintStats(loans); break;
+    case "report-newest":  PrintNewest(books); break;
+    case "report-longest": PrintLongest(loans); break;
+    case "report-details": PrintDetails(loans, copies, books); break;
+    case "report-query":   PrintQuerySyntax(books); break;
+    case "report-stable":  PrintStable(loans); break;
+    case "report-empty":   PrintEmpty(); break;
+    case "report-defer":   PrintDefer(copies); break;
+    case "report-bench":   PrintBench(today); break;
 
-// Підписник 2: ЛЯМБДА із замиканням над локальною змінною changes.
-int changes = 0;
-service.Changed += (_, _) =>
-{
-    changes++;
-    Console.WriteLine($"  [лічильник] подія №{changes}");
-};
+    case "report-all":
+        PrintTop(loans);
+        PrintOverdue(loans, today);
+        PrintBooks(books);
+        PrintStats(loans);
+        PrintNewest(books);
+        PrintLongest(loans);
+        PrintDetails(loans, copies, books);
+        PrintQuerySyntax(books);
+        PrintStable(loans);
+        PrintEmpty();
+        PrintDefer(copies);
+        break;
 
-Console.WriteLine("=== Сценарій 1: успіх (події виникають) ===");
-BookCopy created = service.AddBook("978-1-999999-9-9");
-service.IssueCopy(created.Id, "R-100");
-Console.WriteLine($"Подій отримано: {changes}");
-
-Console.WriteLine();
-Console.WriteLine("=== Сценарій 2: відмова (виняток є, події немає) ===");
-int before = changes;
-TryDo("видача неіснуючого id", () => service.IssueCopy("NO-SUCH-ID", "R-1"));
-TryDo("порожній читач", () => service.IssueCopy(created.Id, " "));
-TryDo("повторна видача виданого примірника", () => service.IssueCopy(created.Id, "R-2"));
-Console.WriteLine($"Нових подій під час відмов: {changes - before}");
-
-Console.WriteLine();
-Console.WriteLine("=== Сценарій 3: відписка -= ===");
-service.Changed -= OnLendingChanged;
-service.ReturnCopy(created.Id); // тиха операція: у консолі й лозі рядка події немає
-Console.WriteLine($"Подій отримано: {changes}"); // +1 лише від лямбди-лічильника
-
-Console.WriteLine();
-Console.WriteLine("=== Func замість події: FindAll з предикатом ===");
-IReadOnlyList<BookCopy> available = service.FindAll(c => !c.IsIssued);
-Console.WriteLine($"Доступні примірники: {available.Count}");
-IReadOnlyList<BookCopy> issued = service.FindAll(c => c.IsIssued);
-Console.WriteLine($"Видані примірники: {issued.Count}");
-
-Console.WriteLine();
-Console.WriteLine("=== Додаткове 1: INotificationSink замість події ===");
-string sinkLogPath = Path.Combine(AppContext.BaseDirectory, "logs", "sink.log");
-var sinkService = new LendingService(
-    new InMemoryBookStore(),
-    [new ConsoleSink(), new FileSink(sinkLogPath)]);
-
-BookCopy sinkCopy = sinkService.AddBook("978-2-222222-2-2");
-sinkService.IssueCopy(sinkCopy.Id, "R-200", loanDays: 7);
-
-Console.WriteLine();
-Console.WriteLine("=== Додаткове 2: Action<string> у методі імпорту ===");
-string samplePath = Path.Combine("data", "sample.csv");
-if (File.Exists(samplePath))
-{
-    var imported = BookCsvImporter.Load(samplePath, msg => Console.WriteLine($"  [пропущено] {msg}"));
-    Console.WriteLine($"Завантажено: {imported.Items.Count}, пропущено: {imported.Errors.Count}");
-}
-else
-{
-    Console.WriteLine($"  файл {Path.GetFullPath(samplePath)} не знайдено — запускайте з кореня CrossApp");
+    default:
+        Console.WriteLine("Доступні команди:");
+        Console.WriteLine("  report-top  report-overdue  report-books  report-stats");
+        Console.WriteLine("  report-newest  report-longest  report-details  report-query");
+        Console.WriteLine("  report-stable  report-empty  report-defer  report-bench  report-all");
+        break;
 }
 
-static void TryDo(string title, Action action)
+// ---------------------------------------------------------------------------
+// Лише виведення. Уся логіка запитів — у Core/Reports.
+// ---------------------------------------------------------------------------
+
+static void PrintTop(IReadOnlyList<Loan> loans)
 {
-    try
+    Console.WriteLine("Топ-5 читачів за кількістю видач:");
+    foreach (ReaderLoanCount r in ReportService.TopReaders(loans, 5))
+        Console.WriteLine($"  {r.ReaderId,-8} видач: {r.Loans,3}");
+}
+
+static void PrintOverdue(IReadOnlyList<Loan> loans, DateTime today)
+{
+    Console.WriteLine($"Прострочені видачі (термін 14 днів, станом на {today:dd.MM.yyyy}):");
+    IReadOnlyList<OverdueLoanLine> lines = ReportService.OverdueLoans(loans, today);
+
+    if (lines.Count == 0)
     {
-        action();
-        Console.WriteLine($"  {title}: виняток НЕ спрацював!");
+        Console.WriteLine("  немає");
+        return;
     }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"  {title}: {ex.GetType().Name} — {ex.Message}");
-    }
+
+    foreach (OverdueLoanLine l in lines)
+        Console.WriteLine(
+            $"  {l.LoanId,-7} {l.CopyId,-6} {l.ReaderId,-6} видано {l.IssuedOn:dd.MM.yyyy}, " +
+            $"до {l.DueOn:dd.MM.yyyy}, прострочено на {l.DaysOverdue,3} дн.");
+}
+
+static void PrintBooks(IReadOnlyList<BookDto> books)
+{
+    Console.WriteLine("Видання за століттями:");
+    foreach (BookGroup g in ReportService.BooksByCentury(books))
+        Console.WriteLine($"  {g.Century,-7} назв: {g.Titles,3}   роки {g.OldestYear}–{g.NewestYear}");
+}
+
+static void PrintStats(IReadOnlyList<Loan> loans)
+{
+    LoanStats s = ReportService.LoanStatistics(loans);
+    Console.WriteLine("Статистика завершених видач:");
+    Console.WriteLine(
+        $"  завершених {s.Closed}, всього днів {s.TotalDays}, " +
+        $"середня тривалість {s.AverageDays:F2} дн., найдовша {s.MaxDays} дн.");
+}
+
+static void PrintNewest(IReadOnlyList<BookDto> books)
+{
+    Console.WriteLine("Топ-5 найновіших видань (TopBy):");
+    foreach (BookLine b in ReportService.NewestBooks(books, 5))
+        Console.WriteLine($"  {b.Id,-6} {b.Title,-30} {b.Year,5}  {b.Author ?? "—"}");
+}
+
+static void PrintLongest(IReadOnlyList<Loan> loans)
+{
+    Console.WriteLine("Топ-5 найдовших завершених видач (TopBy):");
+    foreach (LoanLengthLine l in ReportService.LongestLoans(loans, 5))
+        Console.WriteLine($"  {l.LoanId,-7} {l.ReaderId,-6} {l.Days,3} дн.");
+}
+
+static void PrintDetails(
+    IReadOnlyList<Loan> loans, IReadOnlyList<BookCopy> copies, IReadOnlyList<BookDto> books)
+{
+    IReadOnlyList<LoanDetailLine> details = ReportService.LoanDetails(loans, copies, books);
+    Console.WriteLine($"Видачі з назвами книг (Join), усього {details.Count}, перші 8:");
+    foreach (LoanDetailLine d in details.Take(8))
+        Console.WriteLine(
+            $"  {d.LoanId,-7} {d.ReaderId,-6} {d.Title,-32} {d.IssuedOn:dd.MM.yyyy} " +
+            $"{(d.IsOpen ? "відкрита" : "закрита")}");
+
+    if (details.Count == 0)
+        Console.WriteLine("  (сховище порожнє — запускайте без --file)");
+}
+
+static void PrintQuerySyntax(IReadOnlyList<BookDto> books)
+{
+    Console.WriteLine("Видання за століттями — синтаксис запитів (from ... group ... into):");
+    foreach (BookGroup g in ReportService.BooksByCenturyQuerySyntax(books))
+        Console.WriteLine($"  {g.Century,-7} назв: {g.Titles,3}   роки {g.OldestYear}–{g.NewestYear}");
+
+    Console.WriteLine(
+        $"Методний синтаксис і синтаксис запитів дають однаковий результат: " +
+        $"{ReportService.CenturySyntaxesAgree(books)}");
+}
+
+static void PrintStable(IReadOnlyList<Loan> loans)
+{
+    Console.WriteLine(
+        $"Порядок топ-5 не залежить від порядку джерела: " +
+        $"{ReportService.TopReadersIsOrderIndependent(loans, 5)}");
+}
+
+static void PrintEmpty()
+{
+    Console.WriteLine("Звіти на порожньому джерелі (без винятків):");
+
+    Loan[] noLoans = [];
+    BookDto[] noBooks = [];
+    LoanStats stats = ReportService.LoanStatistics(noLoans);
+
+    Console.WriteLine($"  TopReaders:     {ReportService.TopReaders(noLoans, 5).Count} рядків");
+    Console.WriteLine($"  OverdueLoans:   {ReportService.OverdueLoans(noLoans, DateTime.Today).Count} рядків");
+    Console.WriteLine($"  BooksByCentury: {ReportService.BooksByCentury(noBooks).Count} рядків");
+    Console.WriteLine($"  NewestBooks:    {ReportService.NewestBooks(noBooks, 5).Count} рядків");
+    Console.WriteLine(
+        $"  LoanStatistics: закритих {stats.Closed}, середнє {stats.AverageDays:F2}, макс {stats.MaxDays}");
+}
+
+static void PrintDefer(IReadOnlyList<BookCopy> copies)
+{
+    DeferredDemoResult r = DeferredExecutionDemo.Run(copies);
+
+    Console.WriteLine("Відкладене виконання:");
+    Console.WriteLine($"  Виданих примірників до змін джерела:       {r.Before}");
+    Console.WriteLine($"  Виданих примірників після додавання в нього: {r.After}");
+    Console.WriteLine($"  У знімку (ToList) лишилось:                {r.SnapshotCount}");
+    Console.WriteLine($"  Після Clear() запит бачить:                {r.QueryAfterClear}, а знімок: {r.SnapshotCount}");
+}
+
+static void PrintBench(DateTime today)
+{
+    List<Loan> big = LoanGenerator.Generate(100_000, today);
+    Console.WriteLine($"Згенеровано видач: {big.Count}");
+    Console.WriteLine("Середній час одного виконання (30 запусків, мс):");
+
+    TimeIt("A: без проміжного ToList (2 проходи)", () => ReportBenchmarks.WithoutMaterialization(big));
+    TimeIt("B: один ToList після Where", () => ReportBenchmarks.MaterializeOnce(big));
+    TimeIt("C: ToList після кожного кроку", () => ReportBenchmarks.MaterializeEverywhere(big));
+}
+
+// Func<BenchResult> — приклад Func із лабораторної 6: вимірюваний код передається як значення.
+static void TimeIt(string name, Func<BenchResult> action, int runs = 30)
+{
+    BenchResult last = action();   // прогрів (JIT), у вимір не входить
+
+    var sw = Stopwatch.StartNew();
+    for (int i = 0; i < runs; i++)
+        last = action();
+    sw.Stop();
+
+    Console.WriteLine(
+        $"  {name,-40} {sw.Elapsed.TotalMilliseconds / runs,8:F2} мс   " +
+        $"(відкритих {last.OpenLoans}, у топі {last.TopReaders})");
 }

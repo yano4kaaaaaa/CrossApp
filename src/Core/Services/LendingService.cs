@@ -10,7 +10,7 @@ public sealed class LendingService(IBookStore store, IEnumerable<INotificationSi
     private readonly List<INotificationSink> _sinks = sinks?.ToList() ?? [];
 
     // Подія, а не public-поле делегата: ззовні можна лише += і -=, викликати може тільки сервіс.
-    public event EventHandler<LendingChangedEventArgs>? Changed;
+    public event EventHandler<LendingChangedEventArgs>? Changed; 
 
     // Єдине місце підняття події. Викликається ЛИШЕ після успішної зміни стану.
     private void OnChanged(
@@ -21,9 +21,9 @@ public sealed class LendingService(IBookStore store, IEnumerable<INotificationSi
     {
         var args = new LendingChangedEventArgs(copy.Id, kind, readerId, dueDate);
 
-        Changed?.Invoke(this, args);
+        Changed?.Invoke(this, args); 
 
-        foreach (INotificationSink sink in _sinks)
+        foreach (INotificationSink sink in _sinks) 
             sink.Notify(args);
     }
 

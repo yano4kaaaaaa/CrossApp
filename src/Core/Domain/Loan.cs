@@ -40,7 +40,7 @@ public sealed class Loan
         if (string.IsNullOrWhiteSpace(readerId))
             throw new ArgumentException("Ідентифікатор читача обов'язковий", nameof(readerId));
 
-        copy.Issue(); // кине InvalidOperationException, якщо примірник вже видано
+        copy.Issue(); // кине DomainException, якщо примірник вже видано
 
         string id = $"L-{copy.Id}-{issuedOn:yyyyMMddHHmmss}";
         return new Loan(id, copy.Id, readerId.Trim(), issuedOn, returnedOn: null);
@@ -69,7 +69,7 @@ public sealed class Loan
         };
 
         if (!allowed)
-            throw new InvalidOperationException($"Перехід зі стану {from} у {to} неможливий");
+            throw new DomainException($"Перехід зі стану {from} у {to} неможливий");
     }
 
     // Відновлення з формату зберігання (тиждень 3/5): проходить ті самі перевірки, що й Open/Close.

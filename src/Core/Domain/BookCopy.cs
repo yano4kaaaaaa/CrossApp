@@ -15,7 +15,6 @@ public sealed class BookCopy
         IsIssued = isIssued;
     }
 
-    // Єдиний спосіб створити примірник: усі перевірки тут.
     public static BookCopy Create(string id, string isbn, bool isIssued = false)
     {
         if (string.IsNullOrWhiteSpace(id))
@@ -27,25 +26,21 @@ public sealed class BookCopy
         return new BookCopy(id.Trim(), isbn.Trim(), isIssued);
     }
 
+    // Бізнес-правило → DomainException (раніше InvalidOperationException).
     public void Issue()
     {
         if (IsIssued)
-            throw new InvalidOperationException(
-                $"Примірник {Id} вже виданий, повторна видача неможлива");
-
+            throw new DomainException($"Примірник {Id} уже видано, повторна видача неможлива");
         IsIssued = true;
     }
 
     public void Return()
     {
         if (!IsIssued)
-            throw new InvalidOperationException(
-                $"Примірник {Id} не видано, повернення неможливе");
-
+            throw new DomainException($"Примірник {Id} не видано, повернення неможливе");
         IsIssued = false;
     }
 
-    // Мапінг у формат тижня 3 і назад — знадобиться сховищу тижня 5.
     public BookCopyDto ToDto() => new(Id, Isbn, IsIssued);
 
     public static BookCopy FromDto(BookCopyDto dto) => Create(dto.Id, dto.Isbn, dto.IsIssued);

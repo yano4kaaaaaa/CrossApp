@@ -1,22 +1,34 @@
 ﻿using System.Diagnostics;
+using System.Globalization;
+using System.Text.Json;
 using Core;
 using Core.Abstractions;
 using Core.Domain;
 using Core.Dto;
 using Core.Reports;
 using Core.Services;
+using Core.Storage;
 
 // --- Composition root ---
 string dataPath = Path.Combine(AppContext.BaseDirectory, "data", "library.json");
 IBookStore store = StoreFactory.Create(args, dataPath);
 var service = new LendingService(store);
 
+// Лабораторна 8: Ctrl+C -> скасування токена, а не аварійне завершення.
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+string importPath = args.FirstOrDefault(a => a.StartsWith("--path="))?[7..]
+    ?? Path.Combine(AppContext.BaseDirectory, "data", "import.json");
+double? timeoutSec = args.FirstOrDefault(a => a.StartsWith("--timeout=")) is { } t
+    ? double.Parse(t[10..], CultureInfo.InvariantCulture) : null;
+
 DateTime today = DateTime.Today;
 IReadOnlyList<BookCopy> copies = service.All();
 IReadOnlyList<Loan> loans = SampleData.Loans(today);
 IReadOnlyList<BookDto> books = SampleData.Books();
 
-// Прапорці (--file, --cache) не вважаються назвою звіту.
+// Прапорці (--file, --cache, --path=, --timeout=) не вважаються назвою команди.
 string command = args.FirstOrDefault(a => !a.StartsWith("--")) ?? "report-top";
 
 switch (command)
@@ -33,6 +45,14 @@ switch (command)
     case "report-empty":   PrintEmpty(); break;
     case "report-defer":   PrintDefer(copies); break;
     case "report-bench":   PrintBench(today); break;
+
+    case "import":
+    case "import-stream":
+        await RunImport(service, importPath, command == "import-stream", timeoutSec, cts.Token);
+        break;
+    case "import-gen":
+        ImportGen(importPath, 200_000);
+        break;
 
     case "report-all":
         PrintTop(loans);
@@ -53,7 +73,49 @@ switch (command)
         Console.WriteLine("  report-top  report-overdue  report-books  report-stats");
         Console.WriteLine("  report-newest  report-longest  report-details  report-query");
         Console.WriteLine("  report-stable  report-empty  report-defer  report-bench  report-all");
+        Console.WriteLine("  import  import-stream  import-gen   (--path=файл  --timeout=секунди)");
         break;
+}
+
+// ---------------------------------------------------------------------------
+// Лабораторна 8: імпорт
+// ---------------------------------------------------------------------------
+
+static async Task RunImport(
+    LendingService service, string path, bool stream, double? timeoutSec, CancellationToken ct)
+{
+    var importer = new JsonCatalogImporter();
+    var progress = new SyncProgress(p => Console.Write(stream ? $"\r  оброблено: {p}" : $"\r  {p,3}%"));
+
+    try
+    {
+        int added = stream
+            ? await service.ImportStreamAsync(importer, path, ct, progress)
+            : timeoutSec is double s
+                ? await service.ImportWithTimeoutAsync(importer, path, TimeSpan.FromSeconds(s), ct, progress)
+                : await service.ImportAsync(importer, path, ct, progress);
+
+        Console.WriteLine();
+        Console.WriteLine($"Імпортовано записів: {added}");
+    }
+    // OperationCanceledException — ДО загальних обробників: це очікуване скасування, не збій.
+    catch (OperationCanceledException) { Console.WriteLine("\nІмпорт скасовано."); }
+    catch (TimeoutException ex)        { Console.WriteLine($"\nТаймаут: {ex.Message}"); }
+    catch (DomainException ex)         { Console.WriteLine($"\nДані відхилено: {ex.Message}"); }
+    catch (StorageException ex)        { Console.WriteLine($"\nПомилка сховища: {ex.Message}"); }
+    catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+    {
+        Console.WriteLine($"\nФайл не знайдено: {path}");
+    }
+}
+
+// Генерує великий файл, щоб було чим скасовувати (Ctrl+C / --timeout=0.05).
+static void ImportGen(string path, int count)
+{
+    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+    var items = Enumerable.Range(1, count).Select(i => new BookCopyDto($"G-{i}", $"978-{i:D9}", false));
+    File.WriteAllText(path, JsonSerializer.Serialize(items));
+    Console.WriteLine($"Згенеровано {count} записів: {path}");
 }
 
 // ---------------------------------------------------------------------------
@@ -118,8 +180,8 @@ static void PrintDetails(
     IReadOnlyList<Loan> loans, IReadOnlyList<BookCopy> copies, IReadOnlyList<BookDto> books)
 {
     IReadOnlyList<LoanDetailLine> details = ReportService.LoanDetails(loans, copies, books);
-    Console.WriteLine($"Видачі з назвами книг (Join), усього {details.Count}, перші 8:");
-    foreach (LoanDetailLine d in details.Take(8))
+    Console.WriteLine($"Видачі з назвами книг (Join), усього {details.Count}");
+    foreach (LoanDetailLine d in details)
         Console.WriteLine(
             $"  {d.LoanId,-7} {d.ReaderId,-6} {d.Title,-32} {d.IssuedOn:dd.MM.yyyy} " +
             $"{(d.IsOpen ? "відкрита" : "закрита")}");
@@ -197,4 +259,11 @@ static void TimeIt(string name, Func<BenchResult> action, int runs = 30)
     Console.WriteLine(
         $"  {name,-40} {sw.Elapsed.TotalMilliseconds / runs,8:F2} мс   " +
         $"(відкритих {last.OpenLoans}, у топі {last.TopReaders})");
+}
+
+// Синхронний IProgress: на відміну від Progress<T>, не відкладає виклик у пул потоків,
+// тому відсотки виводяться ДО підсумкового рядка.
+sealed class SyncProgress(Action<int> onReport) : IProgress<int>
+{
+    public void Report(int value) => onReport(value);
 }

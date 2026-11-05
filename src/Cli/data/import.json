@@ -1,0 +1,5 @@
+[
+  {"id":"B-101","isbn":"978-617-12-0001-1","isIssued":false},
+  {"id":"B-102","isbn":"978-617-12-0002-2","isIssued":false},
+  {"id":"B-103","isbn":"978-617-12-0003-3","isIssued":true}
+]

@@ -5,36 +5,17 @@ using Core.Dto;
 
 namespace Core.Storage;
 
-public sealed class FileBookStore(string path) : IBookStore
+// Файлове сховище примірників: шлях приходить ззовні (з конфігурації), запис атомарний.
+// Контракт IBookStore лишається синхронним (як у тижнях 5-8).
+public sealed class FileBookStore : IBookStore
 {
-    private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
-
+    private readonly string _path;
     private readonly Dictionary<string, BookCopy> _cache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly string _path = Path.GetFullPath(path);
     private bool _loaded;
 
-    private void EnsureLoaded()
+    public FileBookStore(string path)
     {
-        if (_loaded) return;
-
-        if (File.Exists(_path))
-        {
-            var dtos = JsonSerializer.Deserialize<List<BookCopyDto>>(File.ReadAllText(_path)) ?? [];
-            foreach (BookCopyDto dto in dtos)
-            {
-                BookCopy copy = BookCopy.FromDto(dto);
-                _cache[copy.Id] = copy;
-            }
-        }
-
-        _loaded = true;
-    }
-
-    private void Flush()
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        File.WriteAllText(_path,
-            JsonSerializer.Serialize(_cache.Values.Select(c => c.ToDto()).ToList(), Options));
+        _path = path ?? throw new ArgumentNullException(nameof(path));
     }
 
     public IReadOnlyList<BookCopy> List()
@@ -63,6 +44,7 @@ public sealed class FileBookStore(string path) : IBookStore
 
     public void Update(BookCopy item)
     {
+        ArgumentNullException.ThrowIfNull(item);
         EnsureLoaded();
         _cache[item.Id] = item;
         Flush();
@@ -71,8 +53,51 @@ public sealed class FileBookStore(string path) : IBookStore
     public bool Remove(string id)
     {
         EnsureLoaded();
-        if (!_cache.Remove(id)) return false;
-        Flush();
-        return true;
+        bool removed = _cache.Remove(id);
+        if (removed)
+            Flush();
+        return removed;
+    }
+
+    private void Flush() =>
+        JsonDefaults.WriteAtomic(_path, _cache.Values.Select(c => c.ToDto()).ToList());
+
+    private void EnsureLoaded()
+    {
+        if (_loaded) return;
+
+        if (File.Exists(_path))
+        {
+            List<BookCopyDto> dtos;
+            try
+            {
+                dtos = JsonSerializer.Deserialize<List<BookCopyDto>>(
+                    File.ReadAllText(_path), JsonDefaults.Options) ?? [];
+            }
+            catch (JsonException ex)
+            {
+                throw new StorageException(
+                    $"Файл {Path.GetFileName(_path)} не є коректним JSON: {ex.Message}", ex);
+            }
+
+            _cache.Clear();
+            for (int i = 0; i < dtos.Count; i++)
+            {
+                if (dtos[i] is null)
+                    throw new DomainException($"Запис {i + 1}: порожнє значення");
+
+                try
+                {
+                    BookCopy copy = BookCopy.FromDto(dtos[i]);   // повторно перевіряє інваріанти
+                    _cache[copy.Id] = copy;
+                }
+                catch (ArgumentException ex)
+                {
+                    throw new DomainException($"Запис {i + 1}: {ex.Message}", ex);
+                }
+            }
+        }
+
+        _loaded = true;
     }
 }

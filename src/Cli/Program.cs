@@ -1,16 +1,41 @@
 ﻿using System.Diagnostics;
+using System.Reflection;
 using System.Globalization;
 using System.Text.Json;
 using Core;
+using Core.Configuration;
 using Core.Abstractions;
 using Core.Domain;
 using Core.Dto;
 using Core.Reports;
 using Core.Services;
 using Core.Storage;
+using Microsoft.Extensions.Configuration;
 
 // --- Composition root ---
-string dataPath = Path.Combine(AppContext.BaseDirectory, "data", "library.json");
+// --- Конфігурація (лабораторна 9): джерела, що пізніші, перекривають попередні ---
+// appsettings.json -> appsettings.{профіль}.json -> user-secrets -> змінні CROSSAPP_* -> аргументи
+string envName = Environment.GetEnvironmentVariable("CROSSAPP_ENVIRONMENT") ?? "Development";
+IConfigurationRoot config = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+    .AddJsonFile($"appsettings.{envName}.json", optional: true)
+    .AddUserSecrets(Assembly.GetExecutingAssembly(), optional: true)
+    .AddEnvironmentVariables(prefix: "CROSSAPP_")
+    .AddCommandLine(args)
+    .Build();
+
+AppOptions options = config.Get<AppOptions>() ?? new AppOptions();
+
+// Проста змінна CROSSAPP_DATA_PATH перекриває розділ Storage.
+string? legacyDataPath = Environment.GetEnvironmentVariable("CROSSAPP_DATA_PATH");
+var storage = new StorageOptions
+{
+    DataPath = string.IsNullOrWhiteSpace(legacyDataPath) ? options.Storage.DataPath : legacyDataPath,
+    FileName = options.Storage.FileName
+};
+string dataPath = storage.ResolveFullPath(AppContext.BaseDirectory);
+string? apiKey = config["Integration:ApiKey"];   // secret: друкуємо лише факт наявності
 IBookStore store = StoreFactory.Create(args, dataPath);
 var service = new LendingService(store);
 
@@ -46,6 +71,17 @@ switch (command)
     case "report-defer":   PrintDefer(copies); break;
     case "report-bench":   PrintBench(today); break;
 
+    case "config":
+        PrintConfig(envName, dataPath, options, apiKey);
+        break;
+    case "export":
+        PrintConfig(envName, dataPath, options, apiKey);
+        Safe(() => ExportCatalog(dataPath, books));
+        break;
+    case "list":
+        Safe(() => ListCatalog(dataPath));
+        break;
+
     case "import":
     case "import-stream":
         await RunImport(service, importPath, command == "import-stream", timeoutSec, cts.Token);
@@ -74,12 +110,67 @@ switch (command)
         Console.WriteLine("  report-newest  report-longest  report-details  report-query");
         Console.WriteLine("  report-stable  report-empty  report-defer  report-bench  report-all");
         Console.WriteLine("  import  import-stream  import-gen   (--path=файл  --timeout=секунди)");
+        Console.WriteLine("  config  export  list");
         break;
 }
 
 // ---------------------------------------------------------------------------
 // Лабораторна 8: імпорт
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Лабораторна 9: конфігурація, експорт/імпорт колекції в JSON
+// ---------------------------------------------------------------------------
+
+static void PrintConfig(string envName, string dataPath, AppOptions options, string? apiKey)
+{
+    Console.WriteLine($"Профіль     : {envName}");
+    Console.WriteLine($"Файл даних  : {dataPath}");
+    Console.WriteLine($"Рівень логу : {options.Logging.MinimumLevel}");
+    Console.WriteLine($"Library:LoanDays : {options.Library.LoanDays}");
+    Console.WriteLine(apiKey is null
+        ? "ApiKey: не заданий"
+        : $"ApiKey: присутній, довжина {apiKey.Length}");
+}
+
+static void ExportCatalog(string dataPath, IReadOnlyList<BookDto> books)
+{
+    var store = new FileBookStore(dataPath);
+    var service = new LendingService(store);
+
+    // Якщо файлу ще немає, створюємо три демонстраційні примірники: кожне Add атомарно пише файл.
+    if (store.List().Count == 0)
+        foreach (string isbn in new[] { "978-617-12-0001-1", "978-617-12-0002-2", "978-617-12-0003-3" })
+            service.AddBook(isbn);
+
+    Console.WriteLine($"Експортовано {store.List().Count} записи у {Path.GetFileName(dataPath)}.");
+
+    // Видання (з кирилицею) теж у JSON: без \uXXXX завдяки UnsafeRelaxedJsonEscaping.
+    string booksPath = Path.Combine(Path.GetDirectoryName(dataPath)!, "books.json");
+    JsonDefaults.WriteAtomic(booksPath, books);
+    Console.WriteLine($"Експортовано видань: {books.Count} у {Path.GetFileName(booksPath)}.");
+}
+
+static void ListCatalog(string dataPath)
+{
+    var store = new FileBookStore(dataPath);
+    IReadOnlyList<BookCopy> all = store.List();
+
+    Console.WriteLine($"Завантажено з {Path.GetFileName(dataPath)}: {all.Count}");
+    foreach (BookCopy c in all)
+        Console.WriteLine($"  {c}");
+    if (all.Count == 0)
+        Console.WriteLine("  (файл порожній або відсутній, виконайте export)");
+}
+
+// Помилки даних і файлів: зрозуміле повідомлення замість необробленого stack trace.
+static void Safe(Action action)
+{
+    try { action(); }
+    catch (StorageException ex) { Console.WriteLine($"Помилка сховища: {ex.Message}"); }
+    catch (DomainException ex)  { Console.WriteLine($"Дані відхилено: {ex.Message}"); }
+    catch (IOException ex)      { Console.WriteLine($"Помилка файлу: {ex.Message}"); }
+}
 
 static async Task RunImport(
     LendingService service, string path, bool stream, double? timeoutSec, CancellationToken ct)

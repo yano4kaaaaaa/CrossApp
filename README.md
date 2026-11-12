@@ -145,3 +145,59 @@ dotnet run --project src/Cli -- report-all        # усе, крім bench
 
    Висновок: `ToList` потрібен там, де запит використовується двічі (A проти B), але ставити його
    після кожного кроку немає сенсу (C): кожен зайвий `ToList` створює копію колекції.
+   # CrossApp: Лабораторна 9 (шляхи, JSON, конфігурація, secrets)
+
+## Запуск
+    dotnet run --project src/Cli -- config      # показати, які налаштування застосовано
+    dotnet run --project src/Cli -- export      # записати колекцію у data/library.json (+ books.json)
+    dotnet run --project src/Cli -- list        # прочитати файл назад
+    dotnet test
+
+Файл даних завжди будується від `AppContext.BaseDirectory` (папка з `Cli.dll`), тому запуск з кореня
+solution і з `src/Cli` дає той самий файл.
+
+## Профілі
+Профіль вибирається змінною `CROSSAPP_ENVIRONMENT` (за замовчуванням `Development`).
+
+| Профіль | Файл | Рівень логу | Дані |
+|---|---|---|---|
+| (база) | appsettings.json | Information | `data/library.json` біля Cli.dll |
+| Development | appsettings.Development.json | Debug | як у базі |
+| Production | appsettings.Production.json | Warning | як у базі; шлях задають змінною середовища |
+
+## Порядок джерел (хто кого перекриває, пізніше сильніше)
+appsettings.json → appsettings.{профіль}.json → user-secrets → змінні `CROSSAPP_*` → аргументи командного рядка
+
+## Таблиця ключів
+| Ключ | Змінна середовища | За замовчуванням | Призначення |
+|---|---|---|---|
+| Storage:DataPath | CROSSAPP_Storage__DataPath | data | каталог даних (відносний від каталогу застосунку) |
+| Storage:FileName | CROSSAPP_Storage__FileName | library.json | ім'я файлу даних |
+| (проста) | CROSSAPP_DATA_PATH | не задана | перекриває Storage:DataPath |
+| Library:LoanDays | CROSSAPP_Library__LoanDays | 14 | термін видачі, днів |
+| Logging:MinimumLevel | CROSSAPP_Logging__MinimumLevel | Information (Debug/Warning у профілях) | рівень логу |
+| Integration:ApiKey | CROSSAPP_Integration__ApiKey | немає | секрет (user-secrets або env) |
+| (профіль) | CROSSAPP_ENVIRONMENT | Development | вибір appsettings.{профіль}.json |
+
+## Приклади змінних
+PowerShell:
+
+    $env:CROSSAPP_DATA_PATH = "$env:TEMP\crossapp-data"
+    $env:CROSSAPP_Library__LoanDays = "21"
+    $env:CROSSAPP_ENVIRONMENT = "Production"
+    dotnet run --project src/Cli -- export
+
+bash:
+
+    CROSSAPP_DATA_PATH=/tmp/crossapp-data dotnet run --project src/Cli -- export
+    CROSSAPP_Library__LoanDays=21 dotnet run --project src/Cli -- config
+
+## Secret
+    dotnet user-secrets init --project src/Cli
+    dotnet user-secrets set "Integration:ApiKey" "local-dev-key" --project src/Cli
+    dotnet user-secrets list --project src/Cli
+
+Значення лежить поза репозиторієм:
+Windows: `%APPDATA%\Microsoft\UserSecrets\<UserSecretsId>\secrets.json`,
+Linux/macOS: `~/.microsoft/usersecrets/<UserSecretsId>/secrets.json`.
+У консолі друкується лише «присутній, довжина N».

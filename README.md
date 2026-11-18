@@ -201,3 +201,51 @@ bash:
 Windows: `%APPDATA%\Microsoft\UserSecrets\<UserSecretsId>\secrets.json`,
 Linux/macOS: `~/.microsoft/usersecrets/<UserSecretsId>/secrets.json`.
 У консолі друкується лише «присутній, довжина N».
+# CrossApp: лабораторна 10 (Minimal API: CRUD, валідація, OpenAPI)
+
+## Запуск
+    dotnet run --project src/Api --urls http://localhost:5080
+
+Порт зафіксовано двічі: `src/Api/Properties/launchSettings.json` і `--urls`.
+Scalar UI: http://localhost:5080/scalar/v1 , документ OpenAPI: http://localhost:5080/openapi/v1.json
+(тільки в Development; `ASPNETCORE_ENVIRONMENT=Development` задано в launchSettings).
+
+## Тести
+    dotnet test                       # Core.Tests + Api.Tests (WebApplicationFactory)
+
+## Маршрути
+| Метод | Шлях | Тіло | Коди відповіді |
+|---|---|---|---|
+| GET | /api/books?page&pageSize&search&author | - | 200 `{items,total,page,pageSize}`, 400 (поганий page/pageSize) |
+| GET | /api/books/{id} | - | 200, 404 |
+| POST | /api/books | SaveBookRequest | 201 + Location, 400 (валідація), 409 (дубль ISBN) |
+| PUT | /api/books/{id} | SaveBookRequest | 200, 400, 404, 409 |
+| DELETE | /api/books/{id} | - | 204, 404 |
+| GET | /health | - | 200 |
+
+`SaveBookRequest`: `{ "isbn", "title", "author", "year", "copies" }`.
+`BookResponse`: `{ "id", "isbn", "title", "author", "year", "copies" }`.
+
+## curl (bash)
+    curl -i -X POST http://localhost:5080/api/books -H "Content-Type: application/json" \
+      -d '{"isbn":"978-617-12-0001-1","title":"Кобзар","author":"Тарас Шевченко","year":1840,"copies":3}'
+    # HTTP/1.1 201 Created, Location: /api/books/8f1c0e2a
+
+    curl -i http://localhost:5080/api/books/8f1c0e2a
+    curl -i "http://localhost:5080/api/books?page=1&pageSize=10&author=шевч"
+    curl -i -X DELETE http://localhost:5080/api/books/8f1c0e2a      # 204, далі GET -> 404
+
+    curl -i -X POST http://localhost:5080/api/books -H "Content-Type: application/json" \
+      -d '{"isbn":"","title":"X","author":"","year":1000,"copies":-1}'   # 400 з errors
+
+## PowerShell
+    $body = @{ isbn="978-617-12-0001-1"; title="Кобзар"; author="Тарас Шевченко"; year=1840; copies=3 } | ConvertTo-Json
+    Invoke-RestMethod -Method Post -Uri http://localhost:5080/api/books -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes($body))
+    Invoke-RestMethod "http://localhost:5080/api/books?page=1&pageSize=10"
+
+(У PowerShell 5 `curl` це псевдонім `Invoke-WebRequest`; для справжнього curl пишіть `curl.exe`.)
+
+## Формат помилок (RFC 9457)
+- 400: `{"title":"One or more validation errors occurred.","status":400,"errors":{"Isbn":["ISBN обов'язковий."]}}`
+- 409: `{"title":"Порушено бізнес-правило.","status":409,"detail":"Видання з ISBN ... уже існує."}`
+- 500: загальний ProblemDetails без stack trace.

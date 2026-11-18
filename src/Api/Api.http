@@ -1,0 +1,61 @@
+@host = http://localhost:5080
+
+### Перевірка живості
+GET {{host}}/health
+
+### 1. CREATE: створити видання (запам'ятовуємо відповідь як createBook)
+# @name createBook
+POST {{host}}/api/books
+Content-Type: application/json
+
+{ "isbn": "978-617-12-0001-1", "title": "Кобзар", "author": "Тарас Шевченко", "year": 1840, "copies": 3 }
+
+### 2. READ: за id із попередньої відповіді
+@bookId = {{createBook.response.body.$.id}}
+GET {{host}}/api/books/{{bookId}}
+
+### 2b. READ: список з пагінацією, пошуком і фільтром за автором
+GET {{host}}/api/books?page=1&pageSize=10&search=коб&author=шевч
+
+### 3. UPDATE: повна заміна
+PUT {{host}}/api/books/{{bookId}}
+Content-Type: application/json
+
+{ "isbn": "978-617-12-0001-1", "title": "Кобзар (нове видання)", "author": "Тарас Шевченко", "year": 1860, "copies": 5 }
+
+### 3b. UPDATE з порожньою назвою -> 400 і перелік полів
+PUT {{host}}/api/books/{{bookId}}
+Content-Type: application/json
+
+{ "isbn": "978-617-12-0001-1", "title": "", "author": "Тарас Шевченко", "year": 1860, "copies": 5 }
+
+### 4. DELETE -> 204
+DELETE {{host}}/api/books/{{bookId}}
+
+### 4b. Після DELETE GET дає 404
+GET {{host}}/api/books/{{bookId}}
+
+### Валідація: кілька помилок одразу -> 400
+POST {{host}}/api/books
+Content-Type: application/json
+
+{ "isbn": "", "title": "X", "author": "", "year": 1000, "copies": -1 }
+
+### Дубль ISBN -> 409 (виконайте створення двічі)
+POST {{host}}/api/books
+Content-Type: application/json
+
+{ "isbn": "978-617-12-0001-1", "title": "Кобзар", "author": "Тарас Шевченко", "year": 1840, "copies": 3 }
+
+### Поганий тип поля -> 400
+POST {{host}}/api/books
+Content-Type: application/json
+
+{ "isbn": "1", "title": "T", "author": "A", "year": 2000, "copies": "abc" }
+
+### Порожнє тіло -> 400
+POST {{host}}/api/books
+Content-Type: application/json
+
+### Неправильна пагінація -> 400
+GET {{host}}/api/books?page=0&pageSize=500

@@ -3,33 +3,50 @@ using Api.Endpoints;
 using Api.Infrastructure;
 using Api.Validation;
 using Core.Abstractions;
-using Core.Storage;
 using FluentValidation;
+using Infrastructure;
+using Infrastructure.Persistence;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
-builder.Services.AddProblemDetails();                        // формат помилок RFC 9457
-builder.Services.AddExceptionHandler<DomainExceptionHandler>();   // DomainException -> 409
-
-// Кривий JSON / порожнє тіло / "copies":"abc" -> 400 (а не виняток -> 500), і в Development теж.
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<DomainExceptionHandler>();
 builder.Services.Configure<RouteHandlerOptions>(o => o.ThrowOnBadRequest = false);
 
-// Сховище приходить через DI (параметром делегата), а не статично.
-// Singleton: один каталог на весь застосунок; реалізація потокобезпечна.
-builder.Services.AddSingleton<IBookCatalog, InMemoryBookCatalog>();
+// --- Лабораторна 11: SQLite через EF Core ---
+// Рядок підключення з конфігурації (ConnectionStrings:AppDb, перекривається змінною ConnectionStrings__AppDb).
+string raw = builder.Configuration.GetConnectionString("AppDb") ?? "Data Source=data/app.db";
+var csb = new SqliteConnectionStringBuilder(raw);
+if (!Path.IsPathRooted(csb.DataSource))
+{
+    // Відносний шлях завжди від каталогу застосунку, а не від поточного каталогу запуску.
+    string full = Path.Combine(builder.Environment.ContentRootPath, csb.DataSource);
+    Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+    csb.DataSource = full;
+}
+
+// DbContext не потокобезпечний, тому Scoped: окремий екземпляр на кожен HTTP-запит.
+builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(csb.ConnectionString));
+builder.Services.AddScoped<IBookCatalog, EfBookCatalog>();   // було: AddSingleton<IBookCatalog, InMemoryBookCatalog>()
 builder.Services.AddSingleton<IValidator<SaveBookRequest>, SaveBookRequestValidator>();
 
 var app = builder.Build();
 
-app.UseExceptionHandler();      // необроблений виняток -> 500 ProblemDetails без stack trace
-app.UseStatusCodePages();       // порожні 400/404 -> ProblemDetails
+app.UseExceptionHandler();
+app.UseStatusCodePages();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();               // /openapi/v1.json
-    app.MapScalarApiReference();    // /scalar/v1
+    // У Development схема створюється/оновлюється міграціями автоматично; у Production командою dotnet ef.
+    using (IServiceScope scope = app.Services.CreateScope())
+        scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.Migrate();
+
+    app.MapOpenApi();
+    app.MapScalarApiReference();
 }
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
@@ -37,5 +54,4 @@ app.MapBooks();
 
 app.Run();
 
-// Потрібно, щоб WebApplicationFactory<Program> бачив точку входу в інтеграційних тестах.
 public partial class Program { }

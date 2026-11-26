@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using Api.Contracts;
@@ -18,7 +18,7 @@ public class BooksApiTests
     [Fact]
     public async Task Post_Valid_Returns201_WithLocation_AndGetByLocationReturns200()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
 
         HttpResponseMessage created = await client.PostAsJsonAsync("/api/books", Req());
@@ -36,7 +36,7 @@ public class BooksApiTests
     [Fact]
     public async Task Post_Invalid_Returns400_WithFieldErrors()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
 
         HttpResponseMessage response = await client.PostAsJsonAsync(
@@ -54,7 +54,7 @@ public class BooksApiTests
     [Fact]
     public async Task Post_EmptyBody_Returns400()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
 
         var response = await client.PostAsync("/api/books",
@@ -66,7 +66,7 @@ public class BooksApiTests
     [Fact]
     public async Task Post_WrongFieldType_Returns400()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
 
         var response = await client.PostAsync("/api/books", new StringContent(
@@ -79,7 +79,7 @@ public class BooksApiTests
     [Fact]
     public async Task Get_UnknownId_Returns404()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
 
         var response = await client.GetAsync("/api/books/no-such-id");
@@ -90,7 +90,7 @@ public class BooksApiTests
     [Fact]
     public async Task Put_Valid_Returns200_AndReplacesState()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
         var created = await (await client.PostAsJsonAsync("/api/books", Req()))
             .Content.ReadFromJsonAsync<BookResponse>();
@@ -107,7 +107,7 @@ public class BooksApiTests
     [Fact]
     public async Task Put_EmptyTitle_Returns400()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
         var created = await (await client.PostAsJsonAsync("/api/books", Req()))
             .Content.ReadFromJsonAsync<BookResponse>();
@@ -120,7 +120,7 @@ public class BooksApiTests
     [Fact]
     public async Task Put_UnknownId_Returns404()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
 
         var response = await client.PutAsJsonAsync("/api/books/no-such-id", Req());
@@ -131,7 +131,7 @@ public class BooksApiTests
     [Fact]
     public async Task Delete_Returns204_ThenGetReturns404()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
         var created = await (await client.PostAsJsonAsync("/api/books", Req()))
             .Content.ReadFromJsonAsync<BookResponse>();
@@ -146,7 +146,7 @@ public class BooksApiTests
     [Fact]
     public async Task Post_DuplicateIsbn_Returns409_AsProblemDetails()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
         await client.PostAsJsonAsync("/api/books", Req());
 
@@ -161,7 +161,7 @@ public class BooksApiTests
     [Fact]
     public async Task List_Paging_ReturnsPageAndTotal()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
         for (int i = 1; i <= 5; i++)
             await client.PostAsJsonAsync("/api/books", Req(isbn: $"isbn-{i}", title: $"Книга {i}"));
@@ -176,7 +176,7 @@ public class BooksApiTests
     [Fact]
     public async Task List_AuthorFilter_ReturnsOnlyMatching()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
         await client.PostAsJsonAsync("/api/books", Req(isbn: "a1", author: "Тарас Шевченко"));
         await client.PostAsJsonAsync("/api/books", Req(isbn: "a2", author: "Леся Українка"));
@@ -190,7 +190,7 @@ public class BooksApiTests
     [Fact]
     public async Task List_InvalidPaging_Returns400()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
 
         var response = await client.GetAsync("/api/books?page=0&pageSize=500");
@@ -201,7 +201,7 @@ public class BooksApiTests
     [Fact]
     public async Task Health_ReturnsOk()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new ApiFactory();
         using HttpClient client = factory.CreateClient();
 
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
